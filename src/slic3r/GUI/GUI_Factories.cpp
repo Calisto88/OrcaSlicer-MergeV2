@@ -123,6 +123,7 @@ std::map<std::string, std::vector<SimpleSettingData>> SettingsFactory::PART_CATE
        {"sparse_infill_density", "", 1},
        {"fill_multiline", "", 1},
        {"sparse_infill_pattern", "", 1},
+       {"sparse_infill_smooth_factor", "", 1},
        {"lateral_lattice_angle_1", "", 1},
        {"lateral_lattice_angle_2", "", 1},
        {"infill_overhang_angle", "", 1},
@@ -1391,7 +1392,7 @@ void MenuFactory::create_default_menu()
 {
     wxMenu* sub_menu_primitives = append_submenu_add_generic(&m_default_menu, ModelVolumeType::INVALID);
     wxMenu* sub_menu_handy = append_submenu_add_handy_model(&m_default_menu, ModelVolumeType::INVALID);
-#ifdef __WINDOWS__
+
     append_submenu(&m_default_menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_submenu(&m_default_menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "menu_add_part",
@@ -1399,21 +1400,12 @@ void MenuFactory::create_default_menu()
     append_menu_item(&m_default_menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "menu_add_part", &m_default_menu,
         []() {return wxGetApp().plater()->can_add_model(); }, m_parent);
-#else
-    append_submenu(&m_default_menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "",
-        []() {return true; }, m_parent);
-    append_submenu(&m_default_menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "",
-        []() {return true; }, m_parent);
-    append_menu_item(&m_default_menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
-        [](wxCommandEvent&) { plater()->add_file(); }, "", &m_default_menu,
-        []() {return wxGetApp().plater()->can_add_model(); }, m_parent);
-#endif
 
     m_default_menu.AppendSeparator();
 
     append_menu_check_item(&m_default_menu, wxID_ANY, _L("Show Labels"), "",
         [](wxCommandEvent&) { plater()->show_view3D_labels(!plater()->are_view3D_labels_shown()); plater()->get_current_canvas3D()->post_event(SimpleEvent(wxEVT_PAINT)); }, &m_default_menu,
-        []() { return plater()->is_view3D_shown(); }, [this]() { return plater()->are_view3D_labels_shown(); }, m_parent);
+        []() { return plater()->is_view3D_shown(); }, []() { return plater()->are_view3D_labels_shown(); }, m_parent);
 }
 
 void MenuFactory::create_common_object_menu(wxMenu* menu)
@@ -1655,7 +1647,11 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
 {
     wxMenu *menu = &m_filament_action_menu;
 
-    if (init) {
+    // ORCA rebuild menu everytime instead checking existing of every item then deleting
+    while (menu->GetMenuItemCount() > 0)
+        menu->Destroy(menu->FindItemByPosition(0));
+
+    //if (init) { // 
         append_menu_item(
             menu, wxID_ANY, _L("Edit"), "", [](wxCommandEvent&) {
                 plater()->sidebar().edit_filament(); }, "", nullptr,
@@ -1667,6 +1663,7 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
     const int item_id = menu->FindItem(_L("Merge with"));
     if (item_id != wxNOT_FOUND)
         menu->Destroy(item_id);
+
 
     wxMenu* sub_menu = new wxMenu();
     std::vector<wxBitmap*> icons = get_extruder_color_icons(true);
@@ -1685,38 +1682,15 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
     append_submenu(menu, sub_menu, wxID_ANY, _L("Merge with"), "", "",
         [filaments_cnt]() { return filaments_cnt > 1; }, m_parent);
 
-    const int physical_extruder_cnt = wxGetApp().preset_bundle->get_printer_extruder_count();
-    const bool can_use_filament_mapping = plater()->sidebar().uses_filament_mapping_badges();
-    const int mapping_item_id       = menu->FindItem(_L("Extruder Mapping"));
-    if (mapping_item_id != wxNOT_FOUND)
-        menu->Destroy(mapping_item_id);
+    // Decompose a target colour into a printable mix of the loaded filaments. Placed before the
+    append_menu_item(
+        menu, wxID_ANY, _L("Decompose Color"), "", [](wxCommandEvent&) {
+            plater()->sidebar().decompose_filament_color(kSidebarContextMenuFilamentId); }, "", nullptr,
+        []() { return plater()->sidebar().combos_filament().size() >= 2; }, m_parent);
 
-    const bool can_remap_filament    = can_use_filament_mapping && active_filament_menu_id >= physical_extruder_cnt;
-    if (can_remap_filament) {
-        wxMenu *mapping_menu      = new wxMenu();
-        const int current_mapping = plater()->sidebar().get_current_plate_filament_mapping(active_filament_menu_id);
-        for (int extruder_id = 1; extruder_id <= physical_extruder_cnt; ++extruder_id) {
-            const wxString item_name = wxString::Format(_L("Extruder %d"), extruder_id);
-            wxMenuItem *item = append_menu_check_item(
-                mapping_menu, wxID_ANY, item_name, "",
-                [active_filament_menu_id, extruder_id](wxCommandEvent &) {
-                    plater()->sidebar().set_current_plate_filament_mapping(size_t(active_filament_menu_id), extruder_id);
-                },
-                mapping_menu,
-                []() { return true; },
-                [current_mapping, extruder_id]() { return current_mapping == extruder_id; },
-                m_parent);
-            item->Check(current_mapping == extruder_id);
-        }
-        append_submenu(menu, mapping_menu, wxID_ANY, _L("Extruder Mapping"), "", "",
-            [physical_extruder_cnt]() { return physical_extruder_cnt > 1; }, m_parent);
-    }
+    menu->AppendSeparator(); // ORCA use seperator for reducing accidental clicks to delete
 
     // ORCA use delete item on end of menu to prevent accidental clicks. clicking to submenus(merge) already not allowed by OS
-    const int delete_id = menu->FindItem(_L("Delete"));
-    if (delete_id != wxNOT_FOUND)
-        menu->Destroy(delete_id);
-
     append_menu_item(
         menu, wxID_ANY, _L("Delete"), _L("Delete this filament"), [](wxCommandEvent&) {
             plater()->sidebar().delete_filament(-2); }, "", nullptr,
@@ -1813,7 +1787,6 @@ void MenuFactory::create_plate_menu()
     wxMenu* sub_menu_primitives = append_submenu_add_generic(menu, ModelVolumeType::INVALID);
     wxMenu* sub_menu_handy = append_submenu_add_handy_model(menu, ModelVolumeType::INVALID);
 
-#ifdef __WINDOWS__
     append_submenu(menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_submenu(menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "menu_add_part",
@@ -1821,15 +1794,7 @@ void MenuFactory::create_plate_menu()
     append_menu_item(menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "menu_add_part", menu,
         []() {return wxGetApp().plater()->can_add_model(); }, m_parent);
-#else
-    append_submenu(menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "",
-        []() {return true; }, m_parent);
-    append_submenu(menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "",
-        []() {return true; }, m_parent);
-    append_menu_item(menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
-        [](wxCommandEvent&) { plater()->add_file(); }, "", menu,
-        []() {return wxGetApp().plater()->can_add_model(); }, m_parent);
-#endif
+
     append_menu_item_replace_all_with_stl(menu);
 
 
@@ -2115,7 +2080,7 @@ void MenuFactory::append_menu_item_clone(wxMenu* menu)
     static const wxString ctrl = _L("Ctrl+");
 #endif
     append_menu_item(menu, wxID_ANY, _L("Clone") + "\t" + ctrl + "K", "",
-        [this](wxCommandEvent&) {
+        [](wxCommandEvent&) {
             plater()->clone_selection();
         }, "", nullptr,
         []() {
@@ -2140,7 +2105,7 @@ void MenuFactory::append_menu_item_smooth_mesh(wxMenu *menu)
 void MenuFactory::append_menu_item_center(wxMenu* menu)
 {
      append_menu_item(menu, wxID_ANY, _L("Center") , "",
-        [this](wxCommandEvent&) {
+        [](wxCommandEvent&) {
             plater()->center_selection();
         }, "", nullptr,
         []() {
@@ -2159,7 +2124,7 @@ void MenuFactory::append_menu_item_center(wxMenu* menu)
 void MenuFactory::append_menu_item_drop(wxMenu* menu)
 {
      append_menu_item(menu, wxID_ANY, _L("Drop") , "",
-        [this](wxCommandEvent&) {
+        [](wxCommandEvent&) {
             plater()->drop_selection();
         }, "", nullptr,
         []() {
@@ -2334,7 +2299,7 @@ void MenuFactory::append_menu_item_set_printable(wxMenu* menu)
         }
     }
 
-    wxMenuItem* menu_item_set_printable = append_menu_check_item(menu, wxID_ANY, _L("Printable") + "\t" + "V", "", [this, all_printable](wxCommandEvent&) {
+    wxMenuItem* menu_item_set_printable = append_menu_check_item(menu, wxID_ANY, _L("Printable") + "\t" + "V", "", [all_printable](wxCommandEvent&) {
         Selection& selection = plater()->canvas3D()->get_selection();
         selection.set_printable(!all_printable);
         }, menu);
@@ -2354,7 +2319,7 @@ void MenuFactory::append_menu_item_set_auto_drop(wxMenu* menu)
     wxString menu_tooltip   = _L("Automatically snaps the selected object to the build plate.");
     wxMenuItem* menu_item_set_auto_drop = append_menu_check_item(
         menu, wxID_ANY, menu_text, menu_tooltip,
-        [this, current_auto_drop](wxCommandEvent&) {
+        [current_auto_drop](wxCommandEvent&) {
             Selection& selection = plater()->canvas3D()->get_selection();
             selection.set_auto_drop(!current_auto_drop);
         },
@@ -2409,7 +2374,7 @@ void MenuFactory::append_menu_item_plate_name(wxMenu *menu)
 
     auto item = append_menu_item(
         menu, wxID_ANY, name, "",
-        [plate](wxCommandEvent &e) {
+        [](wxCommandEvent &e) {
             int hover_idx =plater()->canvas3D()->GetHoverId();
             if (hover_idx == -1) {
                 int plate_idx=plater()->GetPlateIndexByRightMenuInLeftUI();

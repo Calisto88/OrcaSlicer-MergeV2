@@ -36,7 +36,6 @@ public:
     TabButton*                      pageButton;
 
 private:
-    wxWindow*                       m_parent;
     wxFlexGridSizer*                m_buttons_sizer;
     wxBoxSizer*                     m_sizer;
     ScalableBitmap                  m_arrow_img;
@@ -108,7 +107,7 @@ public:
     // by this control) and show it immediately.
     bool ShowNewPage(wxWindow * page)
     {
-        return AddPage(page, wxString(), ""/*true *//* select it */);
+        return AddPage(page, wxString());
     }
 
     // Set effect to use for showing/hiding pages.
@@ -139,14 +138,13 @@ public:
 
     // Implement base class pure virtual methods.
 
-    // adds a new page to the control
     bool AddPage(wxWindow* page,
                  const wxString& text,
-                 const std::string& bmp_name,
-                 bool bSelect = false)
+                 bool bSelect = false,
+                 int imageId = NO_IMAGE) override
     {
         DoInvalidateBestSize();
-        return InsertNewPage(GetPageCount(), page, text, bmp_name, bSelect);
+        return InsertPage(GetPageCount(), page, text, bSelect, imageId);
     }
 
     //// Page management
@@ -183,6 +181,7 @@ public:
 
         return true;
     }
+
 
     bool RemovePage(size_t n) override
     {
@@ -417,8 +416,6 @@ private:
 
     unsigned m_showTimeout,
              m_hideTimeout;
-
-    TabButtonsListCtrl *m_ctrl{nullptr};
 
 };
 //#endif // _WIN32
